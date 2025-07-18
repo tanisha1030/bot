@@ -1,21 +1,9 @@
-# Core packages
+streamlit==1.35.0
+scikit-learn==1.5.0
 pandas==2.2.2
 numpy==1.26.4
-scikit-learn==1.5.0
-
-# Deep learning (TensorFlow)
-tensorflow==2.15.0
-
-# Visualization
 matplotlib==3.9.0
 seaborn==0.13.2
 plotly==5.22.0
-
-# Web app framework
-streamlit==1.35.0
-
-# For saving and working with files
 joblib==1.4.2
-
-# Optional: For compatibility and file handling
-python-dateutil==2.9.0.post0
+tensorflow-cpu==2.12.0
