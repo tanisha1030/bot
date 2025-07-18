@@ -3,418 +3,543 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.ensemble import IsolationForest, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
+from plotly.subplots import make_subplots
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Input, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+from sklearn.utils import class_weight
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, precision_score, recall_score
 import time
-import random
-from datetime import datetime, timedelta
+import io
+import warnings
+warnings.filterwarnings('ignore')
 
-# Set page configuration
+# Set page config
 st.set_page_config(
-    page_title="Botnet Detection Robot Simulation",
+    page_title="🤖 Botnet Detection Simulation",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-class BotnetDetectionRobot:
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metric-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+    }
+    .stAlert {
+        border-radius: 10px;
+    }
+    .robot-status {
+        background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+class BotnetRobotSimulator:
     def __init__(self):
         self.scaler = StandardScaler()
-        self.ml_model = None
-        self.dl_model = None  # Will use logistic regression instead
-        self.anomaly_model = None
-        self.detection_threshold = 0.5
+        self.model = None
+        self.history = None
         
-    def generate_network_data(self, num_samples=1000):
-        """Generate synthetic network traffic data"""
+    def generate_synthetic_robot_data(self, n_samples=10000, botnet_ratio=0.15):
+        """Generate synthetic robot network data simulating botnet behavior"""
         np.random.seed(42)
         
-        # Normal traffic features
-        normal_traffic = {
-            'packet_size': np.random.normal(512, 128, num_samples//2),
-            'connection_duration': np.random.exponential(10, num_samples//2),
-            'bytes_per_second': np.random.normal(1000, 200, num_samples//2),
-            'unique_destinations': np.random.poisson(3, num_samples//2),
-            'port_scan_attempts': np.random.poisson(0.1, num_samples//2),
-            'failed_connections': np.random.poisson(0.5, num_samples//2),
-            'dns_queries': np.random.poisson(5, num_samples//2),
-            'protocol_anomalies': np.random.poisson(0.2, num_samples//2),
-            'label': np.zeros(num_samples//2)
-        }
+        normal_samples = int(n_samples * (1 - botnet_ratio))
+        botnet_samples = n_samples - normal_samples
         
-        # Botnet traffic features (more suspicious patterns)
-        botnet_traffic = {
-            'packet_size': np.random.normal(256, 64, num_samples//2),
-            'connection_duration': np.random.exponential(2, num_samples//2),
-            'bytes_per_second': np.random.normal(2000, 500, num_samples//2),
-            'unique_destinations': np.random.poisson(15, num_samples//2),
-            'port_scan_attempts': np.random.poisson(3, num_samples//2),
-            'failed_connections': np.random.poisson(5, num_samples//2),
-            'dns_queries': np.random.poisson(20, num_samples//2),
-            'protocol_anomalies': np.random.poisson(2, num_samples//2),
-            'label': np.ones(num_samples//2)
-        }
+        # Normal robot behavior - legitimate automated tasks
+        normal_packet_sizes = np.random.normal(512, 128, normal_samples)
+        normal_intervals = np.random.exponential(2.0, normal_samples)  # Slower, more predictable
+        
+        # Botnet robot behavior - malicious coordinated activity
+        botnet_packet_sizes = np.random.normal(1024, 256, botnet_samples)
+        botnet_intervals = np.random.exponential(0.5, botnet_samples)  # Faster, more aggressive
+        
+        # Add some noise and edge cases
+        normal_packet_sizes = np.clip(normal_packet_sizes, 64, 1500)
+        normal_intervals = np.clip(normal_intervals, 0.1, 10.0)
+        botnet_packet_sizes = np.clip(botnet_packet_sizes, 64, 1500)
+        botnet_intervals = np.clip(botnet_intervals, 0.01, 5.0)
         
         # Combine data
-        data = {}
-        for key in normal_traffic.keys():
-            data[key] = np.concatenate([normal_traffic[key], botnet_traffic[key]])
+        packet_sizes = np.concatenate([normal_packet_sizes, botnet_packet_sizes])
+        intervals = np.concatenate([normal_intervals, botnet_intervals])
+        labels = np.concatenate([np.zeros(normal_samples), np.ones(botnet_samples)])
         
-        df = pd.DataFrame(data)
-        return df.sample(frac=1).reset_index(drop=True)
+        # Create DataFrame
+        df = pd.DataFrame({
+            'packet_size': packet_sizes,
+            'interval': intervals,
+            'is_botnet': labels
+        })
+        
+        # Shuffle the data
+        df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+        
+        return df
     
-    def train_ml_models(self, X_train, y_train):
-        """Train machine learning models"""
-        # Random Forest for classification
-        self.ml_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        self.ml_model.fit(X_train, y_train)
+    def create_enhanced_model(self, input_shape):
+        """Create the enhanced neural network model based on your original code"""
+        model = Sequential([
+            Input(shape=(input_shape,)),
+            Dense(128, activation='relu'),
+            BatchNormalization(),
+            Dropout(0.3),
+            Dense(64, activation='relu'),
+            BatchNormalization(),
+            Dropout(0.3),
+            Dense(32, activation='relu'),
+            Dropout(0.2),
+            Dense(1, activation='sigmoid')
+        ])
         
-        # Logistic Regression as "Deep Learning" alternative
-        self.dl_model = LogisticRegression(max_iter=1000, random_state=42)
-        self.dl_model.fit(X_train, y_train)
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            loss='binary_crossentropy',
+            metrics=['accuracy', 'precision', 'recall']
+        )
         
-        # Isolation Forest for anomaly detection
-        self.anomaly_model = IsolationForest(contamination=0.1, random_state=42)
-        self.anomaly_model.fit(X_train)
+        return model
     
-    def simulate_real_time_detection(self, data_sample):
-        """Simulate real-time botnet detection"""
-        if self.ml_model is None or self.dl_model is None:
-            return None
+    def train_model(self, X_train, y_train, progress_bar=None):
+        """Train the model with callbacks and progress tracking"""
+        # Compute class weights
+        weights = class_weight.compute_class_weight(
+            class_weight='balanced', 
+            classes=np.unique(y_train), 
+            y=y_train
+        )
+        class_weights = {i: weights[i] for i in range(len(weights))}
         
-        # ML prediction
-        ml_prediction = self.ml_model.predict_proba(data_sample)[0][1]
+        # Create model
+        self.model = self.create_enhanced_model(X_train.shape[1])
         
-        # "DL" prediction (Logistic Regression)
-        dl_prediction = self.dl_model.predict_proba(data_sample)[0][1]
+        # Define callbacks
+        callbacks = [
+            EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+            ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
+        ]
         
-        # Anomaly detection
-        anomaly_score = self.anomaly_model.decision_function(data_sample)[0]
+        # Custom callback for Streamlit progress
+        class StreamlitCallback(tf.keras.callbacks.Callback):
+            def __init__(self, progress_bar, total_epochs):
+                self.progress_bar = progress_bar
+                self.total_epochs = total_epochs
+                
+            def on_epoch_end(self, epoch, logs=None):
+                if self.progress_bar:
+                    self.progress_bar.progress((epoch + 1) / self.total_epochs)
         
-        # Ensemble prediction
-        ensemble_prediction = (ml_prediction + dl_prediction) / 2
+        if progress_bar:
+            callbacks.append(StreamlitCallback(progress_bar, 100))
         
-        return {
-            'ml_prediction': ml_prediction,
-            'dl_prediction': dl_prediction,
-            'anomaly_score': anomaly_score,
-            'ensemble_prediction': ensemble_prediction,
-            'is_botnet': ensemble_prediction > self.detection_threshold
-        }
+        # Train model
+        self.history = self.model.fit(
+            X_train, y_train,
+            epochs=100,
+            batch_size=32,
+            validation_split=0.2,
+            class_weight=class_weights,
+            callbacks=callbacks,
+            verbose=0
+        )
+        
+        return self.model, self.history
 
-def main():
-    st.title("🤖 Botnet Detection Robot Simulation")
-    st.markdown("### AI-Powered Network Security Monitoring System")
-    st.info("📝 Note: This version uses Logistic Regression instead of Neural Networks for better compatibility.")
+# Initialize the simulator
+@st.cache_resource
+def load_simulator():
+    return BotnetRobotSimulator()
+
+simulator = load_simulator()
+
+# Main app
+st.markdown('<div class="main-header">🤖 Botnet Detection Simulation</div>', unsafe_allow_html=True)
+
+# Sidebar
+st.sidebar.title("🔧 Configuration")
+st.sidebar.markdown("---")
+
+# Data generation parameters
+st.sidebar.subheader("Data Generation")
+n_samples = st.sidebar.slider("Number of Samples", 1000, 50000, 10000, 1000)
+botnet_ratio = st.sidebar.slider("Botnet Ratio", 0.05, 0.5, 0.15, 0.05)
+
+# Model parameters
+st.sidebar.subheader("Model Configuration")
+test_size = st.sidebar.slider("Test Set Size", 0.1, 0.4, 0.2, 0.05)
+epochs = st.sidebar.slider("Training Epochs", 10, 200, 100, 10)
+
+# Generate data button
+if st.sidebar.button("🔄 Generate New Data", type="primary"):
+    st.session_state.data_generated = False
+
+# Main content
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Data Generation", "🧠 Model Training", "📈 Results", "🔍 Real-time Detection"])
+
+with tab1:
+    st.header("Robot Network Data Generation")
     
-    # Initialize robot
-    if 'robot' not in st.session_state:
-        st.session_state.robot = BotnetDetectionRobot()
-        st.session_state.data_generated = False
-        st.session_state.models_trained = False
-    
-    # Sidebar
-    st.sidebar.header("🎛️ Control Panel")
-    
-    # Data Generation
-    st.sidebar.subheader("1. Data Generation")
-    num_samples = st.sidebar.slider("Number of Samples", 500, 5000, 1000)
-    
-    if st.sidebar.button("🔄 Generate Network Data"):
-        with st.spinner("Generating synthetic network data..."):
-            st.session_state.data = st.session_state.robot.generate_network_data(num_samples)
-            st.session_state.data_generated = True
-        st.success("✅ Data generated successfully!")
-    
-    # Model Training
-    st.sidebar.subheader("2. Model Training")
-    if st.sidebar.button("🧠 Train Models", disabled=not st.session_state.data_generated):
-        with st.spinner("Training ML models..."):
-            data = st.session_state.data
-            
-            # Prepare features
-            feature_cols = ['packet_size', 'connection_duration', 'bytes_per_second', 
-                          'unique_destinations', 'port_scan_attempts', 'failed_connections',
-                          'dns_queries', 'protocol_anomalies']
-            
-            X = data[feature_cols]
-            y = data['label']
-            
-            # Split data
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            
-            # Scale features
-            X_train_scaled = st.session_state.robot.scaler.fit_transform(X_train)
-            X_test_scaled = st.session_state.robot.scaler.transform(X_test)
-            
-            # Train models
-            st.session_state.robot.train_ml_models(X_train_scaled, y_train)
-            
-            # Store for evaluation
-            st.session_state.X_test = X_test_scaled
-            st.session_state.y_test = y_test
-            st.session_state.feature_cols = feature_cols
-            st.session_state.models_trained = True
-            
-        st.success("✅ Models trained successfully!")
-    
-    # Real-time Detection
-    st.sidebar.subheader("3. Real-time Detection")
-    detection_speed = st.sidebar.slider("Detection Speed (seconds)", 0.5, 5.0, 1.0)
-    
-    # Main content
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # Data Overview
-        if st.session_state.data_generated:
-            st.subheader("📊 Network Traffic Data")
-            
-            # Display data statistics
-            data = st.session_state.data
-            
-            tab1, tab2, tab3 = st.tabs(["📈 Data Overview", "🔍 Feature Analysis", "🌐 Traffic Patterns"])
-            
-            with tab1:
-                col1_stats, col2_stats = st.columns(2)
-                
-                with col1_stats:
-                    st.metric("Total Samples", data.shape[0])
-                    st.metric("Features", data.shape[1] - 1)
-                
-                with col2_stats:
-                    botnet_ratio = data['label'].mean()
-                    st.metric("Botnet Traffic", f"{botnet_ratio:.2%}")
-                    st.metric("Normal Traffic", f"{1-botnet_ratio:.2%}")
-                
-                st.subheader("📋 Sample Data")
-                st.dataframe(data.head(10))
-            
-            with tab2:
-                # Feature correlation heatmap
-                feature_cols = ['packet_size', 'connection_duration', 'bytes_per_second', 
-                              'unique_destinations', 'port_scan_attempts', 'failed_connections',
-                              'dns_queries', 'protocol_anomalies']
-                
-                corr_matrix = data[feature_cols].corr()
-                fig = px.imshow(corr_matrix, 
-                               title="Feature Correlation Matrix",
-                               color_continuous_scale="RdBu",
-                               text_auto=True)
-                fig.update_layout(height=600)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with tab3:
-                # Traffic patterns visualization
-                col1_viz, col2_viz = st.columns(2)
-                
-                with col1_viz:
-                    fig1 = px.box(data, x='label', y='bytes_per_second', 
-                                 title="Bytes per Second by Traffic Type")
-                    fig1.update_xaxis(tickvals=[0, 1], ticktext=['Normal', 'Botnet'])
-                    st.plotly_chart(fig1, use_container_width=True)
-                
-                with col2_viz:
-                    fig2 = px.box(data, x='label', y='unique_destinations', 
-                                 title="Unique Destinations by Traffic Type")
-                    fig2.update_xaxis(tickvals=[0, 1], ticktext=['Normal', 'Botnet'])
-                    st.plotly_chart(fig2, use_container_width=True)
-                
-                # Distribution plots
-                fig3 = px.histogram(data, x='port_scan_attempts', color='label', 
-                                   title="Port Scan Attempts Distribution",
-                                   barmode='overlay', opacity=0.7)
-                st.plotly_chart(fig3, use_container_width=True)
+        st.subheader("Synthetic Robot Log Generation")
         
-        # Model Performance
-        if st.session_state.models_trained:
-            st.subheader("🎯 Model Performance")
-            
-            # Evaluate models
-            X_test = st.session_state.X_test
-            y_test = st.session_state.y_test
-            
-            # ML model predictions
-            ml_predictions = st.session_state.robot.ml_model.predict(X_test)
-            ml_proba = st.session_state.robot.ml_model.predict_proba(X_test)[:, 1]
-            
-            # "DL" model predictions
-            dl_predictions = st.session_state.robot.dl_model.predict(X_test)
-            dl_proba = st.session_state.robot.dl_model.predict_proba(X_test)[:, 1]
-            
-            # Display metrics
-            col1_metrics, col2_metrics = st.columns(2)
-            
-            with col1_metrics:
-                st.write("**🌳 Random Forest Performance:**")
-                ml_accuracy = accuracy_score(y_test, ml_predictions)
-                ml_report = classification_report(y_test, ml_predictions, output_dict=True)
+        if st.button("Generate Robot Network Data", type="primary") or 'df' not in st.session_state:
+            with st.spinner("Generating synthetic robot network data..."):
+                df = simulator.generate_synthetic_robot_data(n_samples, botnet_ratio)
+                st.session_state.df = df
+                st.session_state.data_generated = True
                 
-                st.metric("Accuracy", f"{ml_accuracy:.3f}")
-                st.metric("Precision", f"{ml_report['1']['precision']:.3f}")
-                st.metric("Recall", f"{ml_report['1']['recall']:.3f}")
-                st.metric("F1-Score", f"{ml_report['1']['f1-score']:.3f}")
+        if 'df' in st.session_state:
+            df = st.session_state.df
             
-            with col2_metrics:
-                st.write("**🧮 Logistic Regression Performance:**")
-                dl_accuracy = accuracy_score(y_test, dl_predictions)
-                dl_report = classification_report(y_test, dl_predictions, output_dict=True)
-                
-                st.metric("Accuracy", f"{dl_accuracy:.3f}")
-                st.metric("Precision", f"{dl_report['1']['precision']:.3f}")
-                st.metric("Recall", f"{dl_report['1']['recall']:.3f}")
-                st.metric("F1-Score", f"{dl_report['1']['f1-score']:.3f}")
+            # Display basic statistics
+            st.success(f"✅ Generated {len(df)} robot network samples")
             
-            # Feature importance
-            st.subheader("🔍 Feature Importance")
-            feature_importance = pd.DataFrame({
-                'feature': st.session_state.feature_cols,
-                'importance': st.session_state.robot.ml_model.feature_importances_
-            }).sort_values('importance', ascending=False)
+            col1_1, col1_2, col1_3 = st.columns(3)
+            with col1_1:
+                st.metric("Total Samples", len(df))
+            with col1_2:
+                normal_count = (df['is_botnet'] == 0).sum()
+                st.metric("Normal Robots", normal_count)
+            with col1_3:
+                botnet_count = (df['is_botnet'] == 1).sum()
+                st.metric("Botnet Robots", botnet_count)
             
-            fig = px.bar(feature_importance, x='importance', y='feature', 
-                        orientation='h', title="Random Forest Feature Importance")
-            st.plotly_chart(fig, use_container_width=True)
+            # Data preview
+            st.subheader("Data Preview")
+            st.dataframe(df.head(10))
             
-            # Confusion Matrix
-            cm = confusion_matrix(y_test, ml_predictions)
-            fig = px.imshow(cm, text_auto=True, 
-                           title="Confusion Matrix - Random Forest",
-                           labels=dict(x="Predicted", y="Actual"))
-            st.plotly_chart(fig, use_container_width=True)
+            # Download option
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download CSV",
+                data=csv,
+                file_name="synthetic_robot_logs.csv",
+                mime="text/csv"
+            )
     
     with col2:
-        # Real-time Detection Panel
-        st.subheader("🔍 Real-time Detection")
-        
-        if st.session_state.models_trained:
-            # Detection controls
-            st.write("**🎮 Detection Controls**")
+        if 'df' in st.session_state:
+            df = st.session_state.df
             
-            # Manual detection
-            if st.button("🔍 Scan Single Sample", type="primary"):
-                sample_data = st.session_state.data.sample(1)
-                feature_cols = st.session_state.feature_cols
-                
-                sample_features = st.session_state.robot.scaler.transform(sample_data[feature_cols])
-                result = st.session_state.robot.simulate_real_time_detection(sample_features)
-                
-                # Display results
-                if result['is_botnet']:
-                    st.error("⚠️ **BOTNET DETECTED!**")
-                    st.balloons()
-                else:
-                    st.success("✅ **Normal Traffic**")
-                
-                # Show prediction scores
-                st.write("**🎯 Prediction Scores:**")
-                st.progress(result['ml_prediction'], f"Random Forest: {result['ml_prediction']:.3f}")
-                st.progress(result['dl_prediction'], f"Logistic Reg: {result['dl_prediction']:.3f}")
-                st.progress(result['ensemble_prediction'], f"Ensemble: {result['ensemble_prediction']:.3f}")
-                
-                # Show sample features
-                st.write("**📊 Sample Features:**")
-                for i, col in enumerate(feature_cols):
-                    st.write(f"• {col}: {sample_data[col].iloc[0]:.2f}")
+            # Class distribution
+            fig_dist = px.pie(
+                values=df['is_botnet'].value_counts().values,
+                names=['Normal', 'Botnet'],
+                title="Robot Type Distribution",
+                color_discrete_map={'Normal': '#2E86AB', 'Botnet': '#F24236'}
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
             
-            # Auto detection toggle
-            st.write("**🔄 Auto Detection**")
-            if 'auto_detect' not in st.session_state:
-                st.session_state.auto_detect = False
+            # Feature distributions
+            fig_features = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=('Packet Size Distribution', 'Interval Distribution'),
+                vertical_spacing=0.1
+            )
             
-            if st.button("▶️ Start Auto Detection" if not st.session_state.auto_detect else "⏸️ Stop Auto Detection"):
-                st.session_state.auto_detect = not st.session_state.auto_detect
+            for label, name, color in [(0, 'Normal', '#2E86AB'), (1, 'Botnet', '#F24236')]:
+                data = df[df['is_botnet'] == label]
+                
+                fig_features.add_trace(
+                    go.Histogram(x=data['packet_size'], name=f'{name} Packets', 
+                               marker_color=color, opacity=0.7),
+                    row=1, col=1
+                )
+                
+                fig_features.add_trace(
+                    go.Histogram(x=data['interval'], name=f'{name} Intervals', 
+                               marker_color=color, opacity=0.7),
+                    row=2, col=1
+                )
             
-            # Auto detection display
-            if st.session_state.auto_detect:
-                detection_placeholder = st.empty()
-                metrics_placeholder = st.empty()
-                
-                # Initialize counters
-                if 'detection_count' not in st.session_state:
-                    st.session_state.detection_count = 0
-                    st.session_state.botnet_detected = 0
-                
-                # Simulate detection
-                sample_data = st.session_state.data.sample(1)
-                feature_cols = st.session_state.feature_cols
-                sample_features = st.session_state.robot.scaler.transform(sample_data[feature_cols])
-                result = st.session_state.robot.simulate_real_time_detection(sample_features)
-                
-                st.session_state.detection_count += 1
-                if result['is_botnet']:
-                    st.session_state.botnet_detected += 1
-                
-                # Update display
-                with detection_placeholder.container():
-                    if result['is_botnet']:
-                        st.error("⚠️ BOTNET DETECTED!")
-                    else:
-                        st.success("✅ Normal Traffic")
-                    
-                    st.progress(result['ensemble_prediction'], f"Threat Level: {result['ensemble_prediction']:.3f}")
-                
-                with metrics_placeholder.container():
-                    st.write("**📈 Detection Statistics:**")
-                    st.metric("Total Scans", st.session_state.detection_count)
-                    st.metric("Threats Found", st.session_state.botnet_detected)
-                    detection_rate = st.session_state.botnet_detected / st.session_state.detection_count
-                    st.metric("Detection Rate", f"{detection_rate:.2%}")
-                
-                # Auto refresh
-                time.sleep(detection_speed)
-                st.rerun()
-            
-            # Reset counters
-            if st.button("🔄 Reset Statistics"):
-                st.session_state.detection_count = 0
-                st.session_state.botnet_detected = 0
-                st.success("Statistics reset!")
-        
-        else:
-            st.info("🔧 **Setup Required**\n\n1. Generate network data\n2. Train models\n3. Start detection")
-            
-            # Show progress
-            progress_val = 0
-            if st.session_state.data_generated:
-                progress_val = 0.5
-            if st.session_state.models_trained:
-                progress_val = 1.0
-            
-            st.progress(progress_val, f"Setup Progress: {progress_val*100:.0f}%")
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("### 🔧 Robot Simulation Features")
-    
-    col1_feat, col2_feat, col3_feat = st.columns(3)
-    
-    with col1_feat:
-        st.markdown("""
-        **🧠 AI Models:**
-        - Random Forest Classifier
-        - Logistic Regression
-        - Isolation Forest (Anomaly Detection)
-        """)
-    
-    with col2_feat:
-        st.markdown("""
-        **📊 Detection Features:**
-        - Real-time monitoring
-        - Ensemble predictions
-        - Feature importance analysis
-        """)
-    
-    with col3_feat:
-        st.markdown("""
-        **🎯 Capabilities:**
-        - Synthetic data generation
-        - Model performance metrics
-        - Interactive visualization
-        """)
+            fig_features.update_layout(height=500, title_text="Feature Distributions")
+            st.plotly_chart(fig_features, use_container_width=True)
 
-if __name__ == "__main__":
-    main()
+with tab2:
+    st.header("Deep Learning Model Training")
+    
+    if 'df' not in st.session_state:
+        st.warning("⚠️ Please generate data first in the Data Generation tab.")
+    else:
+        df = st.session_state.df
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            if st.button("🚀 Train Model", type="primary"):
+                # Prepare data (following your original code structure)
+                X = df[['packet_size', 'interval']].values
+                y = df['is_botnet'].values
+                
+                # Normalize features
+                simulator.scaler = StandardScaler()
+                X_scaled = simulator.scaler.fit_transform(X)
+                
+                # Stratified train-test split
+                sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=42)
+                for train_idx, test_idx in sss.split(X_scaled, y):
+                    X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+                    y_train, y_test = y[train_idx], y[test_idx]
+                
+                # Store test data for later use
+                st.session_state.X_test = X_test
+                st.session_state.y_test = y_test
+                st.session_state.X_scaled = X_scaled
+                
+                # Display training info
+                st.info(f"Training set shape: {X_train.shape}")
+                st.info(f"Test set shape: {X_test.shape}")
+                
+                # Training with progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                with st.spinner("Training deep learning model..."):
+                    status_text.text("Training in progress...")
+                    model, history = simulator.train_model(X_train, y_train, progress_bar)
+                    
+                    # Store model and history
+                    st.session_state.model = model
+                    st.session_state.history = history
+                    st.session_state.model_trained = True
+                    
+                status_text.text("Training completed!")
+                st.success("✅ Model training completed successfully!")
+                
+                # Show training summary
+                st.subheader("Model Architecture")
+                buffer = io.StringIO()
+                model.summary(print_fn=lambda x: buffer.write(x + '\n'))
+                st.text(buffer.getvalue())
+        
+        with col2:
+            if 'history' in st.session_state:
+                st.subheader("Training Progress")
+                
+                # Plot training history
+                history = st.session_state.history
+                
+                fig_loss = go.Figure()
+                fig_loss.add_trace(go.Scatter(
+                    y=history.history['loss'], 
+                    name='Training Loss',
+                    line=dict(color='#FF6B6B')
+                ))
+                fig_loss.add_trace(go.Scatter(
+                    y=history.history['val_loss'], 
+                    name='Validation Loss',
+                    line=dict(color='#4ECDC4')
+                ))
+                fig_loss.update_layout(title="Training Loss", xaxis_title="Epoch", yaxis_title="Loss")
+                st.plotly_chart(fig_loss, use_container_width=True)
+                
+                fig_acc = go.Figure()
+                fig_acc.add_trace(go.Scatter(
+                    y=history.history['accuracy'], 
+                    name='Training Accuracy',
+                    line=dict(color='#FF6B6B')
+                ))
+                fig_acc.add_trace(go.Scatter(
+                    y=history.history['val_accuracy'], 
+                    name='Validation Accuracy',
+                    line=dict(color='#4ECDC4')
+                ))
+                fig_acc.update_layout(title="Training Accuracy", xaxis_title="Epoch", yaxis_title="Accuracy")
+                st.plotly_chart(fig_acc, use_container_width=True)
+
+with tab3:
+    st.header("Model Evaluation Results")
+    
+    if 'model_trained' not in st.session_state:
+        st.warning("⚠️ Please train the model first in the Model Training tab.")
+    else:
+        model = st.session_state.model
+        X_test = st.session_state.X_test
+        y_test = st.session_state.y_test
+        
+        # Make predictions
+        y_pred_probs = model.predict(X_test, verbose=0)
+        y_pred = (y_pred_probs > 0.5).astype(int)
+        
+        # Calculate metrics
+        cm = confusion_matrix(y_test, y_pred)
+        roc_auc = roc_auc_score(y_test, y_pred_probs)
+        f1 = f1_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred)
+        recall = recall_score(y_test, y_pred)
+        
+        # Display metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("ROC-AUC Score", f"{roc_auc:.4f}")
+        with col2:
+            st.metric("F1 Score", f"{f1:.4f}")
+        with col3:
+            st.metric("Precision", f"{precision:.4f}")
+        with col4:
+            st.metric("Recall", f"{recall:.4f}")
+        
+        # Confusion Matrix
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.subheader("Confusion Matrix")
+            fig_cm = px.imshow(cm, text_auto=True, aspect="auto",
+                              labels=dict(x="Predicted", y="Actual"),
+                              x=['Normal', 'Botnet'], y=['Normal', 'Botnet'])
+            fig_cm.update_layout(title="Confusion Matrix")
+            st.plotly_chart(fig_cm, use_container_width=True)
+        
+        with col2:
+            st.subheader("Classification Report")
+            report = classification_report(y_test, y_pred, output_dict=True)
+            report_df = pd.DataFrame(report).transpose()
+            st.dataframe(report_df)
+        
+        # ROC Curve
+        from sklearn.metrics import roc_curve
+        fpr, tpr, _ = roc_curve(y_test, y_pred_probs)
+        
+        fig_roc = go.Figure()
+        fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f'ROC Curve (AUC = {roc_auc:.4f})'))
+        fig_roc.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='Random Classifier'))
+        fig_roc.update_layout(
+            title="ROC Curve",
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate"
+        )
+        st.plotly_chart(fig_roc, use_container_width=True)
+
+with tab4:
+    st.header("Real-time Botnet Detection")
+    
+    if 'model_trained' not in st.session_state:
+        st.warning("⚠️ Please train the model first in the Model Training tab.")
+    else:
+        st.subheader("🔍 Test Individual Robot Behavior")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.write("**Enter Robot Network Parameters:**")
+            packet_size = st.number_input("Packet Size (bytes)", min_value=64, max_value=1500, value=512)
+            interval = st.number_input("Interval (seconds)", min_value=0.01, max_value=10.0, value=1.0, step=0.1)
+            
+            if st.button("🔍 Detect Botnet", type="primary"):
+                # Prepare input
+                input_data = np.array([[packet_size, interval]])
+                input_scaled = simulator.scaler.transform(input_data)
+                
+                # Make prediction
+                prediction_prob = simulator.model.predict(input_scaled, verbose=0)[0][0]
+                prediction = "🦠 BOTNET" if prediction_prob > 0.5 else "✅ NORMAL"
+                
+                # Display result
+                with col2:
+                    st.subheader("Detection Result")
+                    
+                    if prediction_prob > 0.5:
+                        st.error(f"🚨 **BOTNET DETECTED** 🚨")
+                        st.error(f"Confidence: {prediction_prob:.2%}")
+                    else:
+                        st.success(f"✅ **NORMAL ROBOT** ✅")
+                        st.success(f"Confidence: {1-prediction_prob:.2%}")
+                    
+                    # Gauge chart for confidence
+                    fig_gauge = go.Figure(go.Indicator(
+                        mode = "gauge+number",
+                        value = prediction_prob,
+                        domain = {'x': [0, 1], 'y': [0, 1]},
+                        title = {'text': "Botnet Probability"},
+                        gauge = {
+                            'axis': {'range': [None, 1]},
+                            'bar': {'color': "darkblue"},
+                            'steps': [
+                                {'range': [0, 0.5], 'color': "lightgray"},
+                                {'range': [0.5, 1], 'color': "gray"}
+                            ],
+                            'threshold': {
+                                'line': {'color': "red", 'width': 4},
+                                'thickness': 0.75,
+                                'value': 0.5
+                            }
+                        }
+                    ))
+                    fig_gauge.update_layout(height=300)
+                    st.plotly_chart(fig_gauge, use_container_width=True)
+        
+        # Batch testing
+        st.subheader("📊 Batch Testing")
+        
+        if st.button("🎲 Generate Random Test Batch"):
+            # Generate random test samples
+            test_samples = 100
+            test_data = simulator.generate_synthetic_robot_data(test_samples, 0.3)
+            
+            X_batch = test_data[['packet_size', 'interval']].values
+            y_batch = test_data['is_botnet'].values
+            X_batch_scaled = simulator.scaler.transform(X_batch)
+            
+            # Make predictions
+            predictions = simulator.model.predict(X_batch_scaled, verbose=0)
+            predicted_labels = (predictions > 0.5).astype(int)
+            
+            # Calculate accuracy
+            accuracy = np.mean(predicted_labels.flatten() == y_batch)
+            
+            # Display results
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Batch Size", test_samples)
+            with col2:
+                st.metric("Accuracy", f"{accuracy:.2%}")
+            with col3:
+                detected_botnets = np.sum(predicted_labels)
+                st.metric("Detected Botnets", detected_botnets)
+            
+            # Show sample results
+            results_df = pd.DataFrame({
+                'Packet Size': X_batch[:10, 0],
+                'Interval': X_batch[:10, 1],
+                'Actual': ['Botnet' if x == 1 else 'Normal' for x in y_batch[:10]],
+                'Predicted': ['Botnet' if x == 1 else 'Normal' for x in predicted_labels[:10].flatten()],
+                'Confidence': [f"{x:.2%}" for x in predictions[:10].flatten()]
+            })
+            
+            st.subheader("Sample Results")
+            st.dataframe(results_df)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 2rem;">
+    <p>🤖 Botnet Detection Simulation | Built with Streamlit & TensorFlow</p>
+    <p>Based on Deep Learning Neural Networks for Robot Network Analysis</p>
+</div>
+""", unsafe_allow_html=True)
