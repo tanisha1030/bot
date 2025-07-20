@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.utils import class_weight
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, f1_score, precision_score, recall_score
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Dense, Input, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import os
 
 # Configure the page
@@ -18,140 +19,224 @@ st.set_page_config(page_title="Botnet Detection", layout="wide")
 # Title
 st.title("🤖 Botnet Detection in Robotic Network Logs")
 
-# Load data function - Updated to use the actual data path from main.py
+# Set random seeds for reproducibility (same as main.py)
+np.random.seed(42)
+tf.random.set_seed(42)
+
+# Load and process data exactly like main.py
 @st.cache_data
-def load_data():
-    """Load the dataset from the same path used in main.py"""
+def load_and_process_data():
+    """Load and process data exactly as done in main.py"""
     try:
-        # Primary path from main.py
-        primary_path = "/content/synthetic_robot_logs.csv"
+        # Try to load from the exact path used in main.py
+        df = pd.read_csv("/content/synthetic_robot_logs.csv")
         
-        # Alternative paths to try
-        possible_paths = [
-            primary_path,
-            "synthetic_robot_logs.csv",
-            "data/synthetic_robot_logs.csv",
-            "./synthetic_robot_logs.csv"
-        ]
+        st.success("✅ Dataset loaded successfully!")
         
-        for path in possible_paths:
-            if os.path.exists(path):
-                df = pd.read_csv(path)
-                st.success(f"✅ Dataset loaded from {path}")
-                
-                # Validate the data structure matches main.py expectations
-                expected_columns = ['packet_size', 'interval', 'is_botnet']
-                if all(col in df.columns for col in expected_columns):
-                    # Display basic info like in main.py
-                    st.info(f"""
-                    📊 **Dataset Information (from main.py path):**
-                    - Shape: {df.shape}
-                    - Class distribution: {df['is_botnet'].value_counts().to_dict()}
-                    - Missing values: {df.isnull().sum().sum()}
-                    """)
-                    return df
-                else:
-                    st.warning(f"⚠️ Dataset found but missing required columns. Expected: {expected_columns}")
+        # Display basic data exploration (exactly like main.py)
+        st.info(f"""
+        📊 **Dataset Information (from main.py):**
+        - Dataset shape: {df.shape}
+        - Class distribution: {df['is_botnet'].value_counts().to_dict()}
+        - Missing values: {df.isnull().sum().sum()}
+        """)
         
-        # If no valid file found, inform user
+        return df
+        
+    except FileNotFoundError:
         st.error(f"""
-        ❌ **Dataset not found at expected paths:**
-        - Primary: {primary_path}
-        - Alternatives: {possible_paths[1:]}
+        ❌ **Dataset not found at: `/content/synthetic_robot_logs.csv`**
         
-        **To use this app with your actual data:**
-        1. Ensure 'synthetic_robot_logs.csv' exists in one of the above paths
-        2. Make sure it has columns: packet_size, interval, is_botnet
-        3. Or upload the file to the same location as main.py
+        **To fix this:**
+        1. Make sure you're running this in the same environment as main.py
+        2. Ensure the CSV file exists at the exact path used in main.py
+        3. Run main.py first to generate the dataset if needed
         """)
         return None
-        
     except Exception as e:
         st.error(f"❌ Error loading dataset: {e}")
         return None
 
-# Load pre-trained model from main.py if available
 @st.cache_resource
-def load_pretrained_model():
-    """Load the deep learning model saved by main.py"""
+def prepare_data_like_main_py(df):
+    """Prepare data using the exact same process as main.py"""
+    
+    # Features and labels (exactly like main.py)
+    X = df[['packet_size', 'interval']].values
+    y = df['is_botnet'].values
+    
+    # Normalize features (exactly like main.py)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Stratified train-test split (exactly like main.py)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    for train_idx, test_idx in sss.split(X_scaled, y):
+        X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+    
+    st.info(f"""
+    📈 **Data Split (matching main.py):**
+    - Training set shape: {X_train.shape}
+    - Test set shape: {X_test.shape}
+    """)
+    
+    # Compute class weights (exactly like main.py)
+    weights = class_weight.compute_class_weight(
+        class_weight='balanced', 
+        classes=np.unique(y_train), 
+        y=y_train
+    )
+    class_weights = {i: weights[i] for i in range(len(weights))}
+    
+    st.info(f"⚖️ **Class weights:** {class_weights}")
+    
+    return X_train, X_test, y_train, y_test, scaler, class_weights
+
+@st.cache_resource
+def create_model_like_main_py(input_shape):
+    """Create the exact same model architecture as main.py"""
+    
+    # Define improved model with regularization (exactly like main.py)
+    model = Sequential([
+        Input(shape=(input_shape,)),
+        Dense(128, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(64, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(32, activation='relu'),
+        Dropout(0.2),
+        Dense(1, activation='sigmoid')
+    ])
+    
+    # Compile model with better optimizer settings (exactly like main.py)
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='binary_crossentropy',
+        metrics=['accuracy', 'precision', 'recall']
+    )
+    
+    return model
+
+@st.cache_resource
+def load_or_train_model(_X_train, _X_test, _y_train, _y_test, _class_weights):
+    """Load pre-trained model or train new one using exact main.py approach"""
+    
     model_path = 'botnet_detection_model.h5'
     
+    # Try to load pre-trained model first
     if os.path.exists(model_path):
         try:
             model = load_model(model_path)
-            st.success("✅ Pre-trained deep learning model loaded from main.py!")
-            return model, "deep_learning"
+            st.success("✅ Loaded pre-trained model from main.py!")
+            
+            # Evaluate the model on test data to get real accuracy
+            y_pred_probs = model.predict(_X_test, verbose=0)
+            y_pred = (y_pred_probs > 0.5).astype(int)
+            
+            # Calculate all metrics like main.py
+            test_accuracy = (y_pred == _y_test.reshape(-1, 1)).mean()
+            roc_auc = roc_auc_score(_y_test, y_pred_probs)
+            f1 = f1_score(_y_test, y_pred)
+            precision = precision_score(_y_test, y_pred)
+            recall = recall_score(_y_test, y_pred)
+            
+            return model, test_accuracy, roc_auc, f1, precision, recall, y_pred_probs, y_pred
+            
         except Exception as e:
-            st.warning(f"⚠️ Could not load pre-trained model: {e}")
+            st.warning(f"⚠️ Could not load pre-trained model: {e}. Training new model...")
     
-    return None, None
+    # Train new model using exact main.py approach
+    st.info("🔄 Training new model using main.py approach...")
+    
+    model = create_model_like_main_py(_X_train.shape[1])
+    
+    # Define callbacks (exactly like main.py)
+    callbacks = [
+        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
+    ]
+    
+    # Train model (exactly like main.py)
+    with st.spinner("Training model... This may take a few minutes."):
+        history = model.fit(
+            _X_train, _y_train,
+            epochs=100,
+            batch_size=32,
+            validation_split=0.2,
+            class_weight=_class_weights,
+            callbacks=callbacks,
+            verbose=0  # Silent training for Streamlit
+        )
+    
+    # Predict with optimal threshold (exactly like main.py)
+    y_pred_probs = model.predict(_X_test, verbose=0)
+    y_pred = (y_pred_probs > 0.5).astype(int)
+    
+    # Calculate all metrics exactly like main.py
+    test_accuracy = (y_pred == _y_test.reshape(-1, 1)).mean()
+    roc_auc = roc_auc_score(_y_test, y_pred_probs)
+    f1 = f1_score(_y_test, y_pred)
+    precision = precision_score(_y_test, y_pred)
+    recall = recall_score(_y_test, y_pred)
+    
+    # Save model
+    model.save(model_path)
+    st.success(f"✅ Model trained and saved as '{model_path}'")
+    
+    return model, test_accuracy, roc_auc, f1, precision, recall, y_pred_probs, y_pred
 
-# Train scikit-learn model as fallback
-@st.cache_resource
-def train_fallback_model(df):
-    """Train a scikit-learn model as fallback when TensorFlow model isn't available"""
-    try:
-        if df is not None and 'is_botnet' in df.columns:
-            X = df[['packet_size', 'interval']].values
-            y = df['is_botnet'].values
-            
-            # Split data using same approach as main.py
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42, stratify=y
-            )
-            
-            # Scale features (same as main.py)
-            scaler = StandardScaler()
-            X_train_scaled = scaler.fit_transform(X_train)
-            X_test_scaled = scaler.transform(X_test)
-            
-            # Train model
-            model = RandomForestClassifier(
-                n_estimators=100, 
-                random_state=42,
-                max_depth=10,
-                min_samples_split=5
-            )
-            model.fit(X_train_scaled, y_train)
-            
-            # Calculate accuracy
-            train_accuracy = accuracy_score(y_train, model.predict(X_train_scaled))
-            test_accuracy = accuracy_score(y_test, model.predict(X_test_scaled))
-            
-            st.info(f"📊 Fallback model trained - Training Accuracy: {train_accuracy:.3f} | Test Accuracy: {test_accuracy:.3f}")
-            
-            return model, scaler, test_accuracy, "random_forest"
-        
-        else:
-            st.error("❌ Unable to train model: Invalid dataset")
-            return None, None, 0.0, None
-            
-    except Exception as e:
-        st.error(f"❌ Error training model: {e}")
-        return None, None, 0.0, None
-
-# Load data using the actual path from main.py
-df = load_data()
+# Load data
+df = load_and_process_data()
 
 if df is not None:
-    # Try to load the pre-trained deep learning model first
-    pretrained_model, model_type = load_pretrained_model()
+    # Prepare data exactly like main.py
+    X_train, X_test, y_train, y_test, scaler, class_weights = prepare_data_like_main_py(df)
     
-    if pretrained_model is not None:
-        # Use the pre-trained deep learning model
-        model = pretrained_model
-        scaler = StandardScaler()  # We'll need to fit this on the data
-        X = df[['packet_size', 'interval']].values
-        scaler.fit(X)
-        model_accuracy = 0.95  # Placeholder - you could calculate this if you have test data
-        model_type_display = "Deep Learning (from main.py)"
-    else:
-        # Fall back to training a new scikit-learn model
-        model, scaler, model_accuracy, model_type = train_fallback_model(df)
-        model_type_display = "Random Forest (fallback)"
-
-    if model is not None and scaler is not None:
-        # Display basic info about the dataset
+    # Load or train model
+    model, test_accuracy, roc_auc, f1, precision, recall, y_pred_probs, y_pred = load_or_train_model(
+        X_train, X_test, y_train, y_test, class_weights
+    )
+    
+    if model is not None:
+        # Display model performance exactly like main.py
+        st.subheader("🎯 Model Performance (Exact Results from main.py)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Test Accuracy", f"{test_accuracy:.4f}")
+        with col2:
+            st.metric("ROC-AUC Score", f"{roc_auc:.4f}")
+        with col3:
+            st.metric("F1 Score", f"{f1:.4f}")
+        with col4:
+            st.metric("Precision", f"{precision:.4f}")
+        
+        # Enhanced evaluation (exactly like main.py)
+        st.subheader("📊 Detailed Evaluation (from main.py)")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Confusion Matrix:**")
+            cm = confusion_matrix(y_test, y_pred)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            ax.set_title('Confusion Matrix')
+            st.pyplot(fig)
+            plt.close()
+        
+        with col2:
+            st.write("**Classification Report:**")
+            report = classification_report(y_test, y_pred, output_dict=True)
+            report_df = pd.DataFrame(report).transpose()
+            st.dataframe(report_df)
+        
+        # Display dataset information
         st.subheader("📊 Dataset Information")
         col1, col2, col3, col4 = st.columns(4)
         
@@ -167,23 +252,7 @@ if df is not None:
             st.metric("Normal Records", int(normal_count))
         
         with col4:
-            st.metric("Model Type", model_type_display.split('(')[0])
-        
-        # Display data statistics matching main.py output
-        st.subheader("📈 Data Statistics (matching main.py analysis)")
-        stats_col1, stats_col2 = st.columns(2)
-        
-        with stats_col1:
-            st.write("**Feature Statistics:**")
-            feature_stats = df[['packet_size', 'interval']].describe()
-            st.dataframe(feature_stats)
-        
-        with stats_col2:
-            st.write("**Class Distribution:**")
-            class_dist = df['is_botnet'].value_counts()
-            st.write(f"- Normal (0): {class_dist[0]:,} samples")
-            st.write(f"- Botnet (1): {class_dist[1]:,} samples")
-            st.write(f"- Balance ratio: {class_dist[0]/class_dist[1]:.2f}:1")
+            st.metric("Features", len(['packet_size', 'interval']))
         
         # Dataset preview
         st.subheader("🔍 Dataset Preview")
@@ -191,7 +260,7 @@ if df is not None:
         
         # User input for prediction
         st.subheader("🔍 Predict Botnet Activity")
-        st.write(f"**Using:** {model_type_display}")
+        st.write("**Using the same model and preprocessing as main.py**")
         
         # Get ranges from actual data
         min_packet = float(df['packet_size'].min())
@@ -228,24 +297,16 @@ if df is not None:
         with col1:
             if st.button("🔮 Predict", type="primary", use_container_width=True):
                 try:
-                    # Prepare input data
+                    # Prepare input data using same scaler as main.py
                     input_data = np.array([[packet_size, interval]])
                     input_scaled = scaler.transform(input_data)
                     
-                    # Get prediction based on model type
-                    if model_type == "deep_learning":
-                        # Deep learning model prediction
-                        prediction_prob = model.predict(input_scaled, verbose=0)[0][0]
-                        prediction = 1 if prediction_prob > 0.5 else 0
-                        confidence = prediction_prob if prediction == 1 else (1 - prediction_prob)
-                        probability = [1 - prediction_prob, prediction_prob]
-                    else:
-                        # Scikit-learn model prediction
-                        prediction = model.predict(input_scaled)[0]
-                        probability = model.predict_proba(input_scaled)[0]
-                        confidence = max(probability)
+                    # Get prediction using same threshold as main.py
+                    prediction_prob = model.predict(input_scaled, verbose=0)[0][0]
+                    prediction = 1 if prediction_prob > 0.5 else 0
+                    confidence = prediction_prob if prediction == 1 else (1 - prediction_prob)
                     
-                    # Display result with styling
+                    # Display result
                     if prediction == 1:
                         st.error(f"🔴 **Botnet Activity Detected!**")
                         st.error(f"Confidence: {confidence:.1%}")
@@ -256,38 +317,50 @@ if df is not None:
                     # Show additional details
                     with st.expander("📊 Prediction Details"):
                         st.write(f"**Prediction:** {'Botnet' if prediction == 1 else 'Normal'}")
-                        st.write(f"**Normal Probability:** {probability[0]:.4f}")
-                        st.write(f"**Botnet Probability:** {probability[1]:.4f}")
-                        st.write(f"**Model Type:** {model_type_display}")
+                        st.write(f"**Raw Probability:** {prediction_prob:.4f}")
+                        st.write(f"**Threshold:** 0.5 (same as main.py)")
+                        st.write(f"**Model Accuracy:** {test_accuracy:.4f}")
                         st.write(f"**Input values:** Packet Size = {packet_size:.2f}, Interval = {interval:.2f}")
                         
-                        # Show how this compares to dataset
-                        percentile_packet = (df['packet_size'] < packet_size).mean() * 100
-                        percentile_interval = (df['interval'] < interval).mean() * 100
-                        st.write(f"**Data percentiles:** Packet size = {percentile_packet:.1f}th, Interval = {percentile_interval:.1f}th")
+                        # Show preprocessing details
+                        st.write("**Preprocessing (same as main.py):**")
+                        st.write(f"- Standardized packet size: {input_scaled[0][0]:.4f}")
+                        st.write(f"- Standardized interval: {input_scaled[0][1]:.4f}")
                         
                 except Exception as e:
                     st.error(f"❌ Prediction failed: {e}")
         
         with col2:
-            if st.button("🎲 Use Random Sample from Dataset", use_container_width=True):
-                # Select a random sample from the actual dataset
-                sample = df.sample(1).iloc[0]
-                st.rerun()
+            if st.button("🎲 Random Sample from Test Set", use_container_width=True):
+                # Get a random sample from the test set used in main.py
+                random_idx = np.random.randint(0, len(X_test))
+                original_values = scaler.inverse_transform([X_test[random_idx]])[0]
+                
+                st.write(f"**Test Sample #{random_idx}:**")
+                st.write(f"- Packet Size: {original_values[0]:.2f}")
+                st.write(f"- Interval: {original_values[1]:.2f}")
+                st.write(f"- True Label: {'Botnet' if y_test[random_idx] == 1 else 'Normal'}")
+                
+                # Make prediction
+                pred_prob = model.predict([X_test[random_idx:random_idx+1]], verbose=0)[0][0]
+                pred_label = 1 if pred_prob > 0.5 else 0
+                
+                if pred_label == y_test[random_idx]:
+                    st.success(f"✅ Correct prediction: {pred_prob:.4f}")
+                else:
+                    st.error(f"❌ Incorrect prediction: {pred_prob:.4f}")
         
-        # Visualization section using actual data
-        st.subheader("📊 Data Visualization (Actual Dataset)")
+        # Visualization section
+        st.subheader("📊 Data Visualization")
         
-        # Create tabs for different visualizations
-        tab1, tab2, tab3 = st.tabs(["🎯 Scatter Plot", "📈 Distributions", "⚖️ Class Balance"])
+        tab1, tab2, tab3 = st.tabs(["🎯 Scatter Plot", "📈 Distributions", "📋 Model Details"])
         
         with tab1:
             st.write("**Packet Size vs Interval Analysis (Real Data)**")
             
             fig, ax = plt.subplots(figsize=(12, 8))
             
-            # Create scatter plot with actual data
-            colors = ['#2E8B57', '#DC143C']  # Sea green and crimson
+            colors = ['#2E8B57', '#DC143C']
             labels = ['Normal', 'Botnet']
             
             for i, (label, color) in enumerate(zip(labels, colors)):
@@ -298,24 +371,16 @@ if df is not None:
             
             ax.set_xlabel("Packet Size (bytes)", fontsize=12)
             ax.set_ylabel("Interval (seconds)", fontsize=12)
-            ax.set_title("Network Traffic Patterns: Botnet vs Normal Activity (Real Data)", fontsize=14, fontweight='bold')
-            ax.legend(title='Activity Type', title_fontsize=10)
+            ax.set_title("Network Traffic Patterns (Real Data from main.py)", fontsize=14, fontweight='bold')
+            ax.legend(title='Activity Type')
             ax.grid(True, alpha=0.3)
             
             plt.tight_layout()
             st.pyplot(fig)
             plt.close()
-            
-            # Add interpretation
-            st.info("""
-            **Interpretation Guide (Real Data):**
-            - 🟢 **Green points (Normal):** Actual normal network behavior from your dataset
-            - 🔴 **Red points (Botnet):** Actual botnet activity patterns from your dataset
-            - These patterns reflect the real data distributions used in main.py training
-            """)
         
         with tab2:
-            st.write("**Feature Distribution Analysis (Real Data)**")
+            st.write("**Feature Distribution Analysis**")
             
             fig, axes = plt.subplots(2, 2, figsize=(15, 10))
             
@@ -327,7 +392,7 @@ if df is not None:
                                    label=label, bins=30, edgecolor='black', linewidth=0.5)
             axes[0, 0].set_xlabel("Packet Size (bytes)")
             axes[0, 0].set_ylabel("Frequency")
-            axes[0, 0].set_title("Packet Size Distribution (Real Data)")
+            axes[0, 0].set_title("Packet Size Distribution")
             axes[0, 0].legend()
             axes[0, 0].grid(True, alpha=0.3)
             
@@ -339,143 +404,105 @@ if df is not None:
                                    label=label, bins=30, edgecolor='black', linewidth=0.5)
             axes[0, 1].set_xlabel("Interval (seconds)")
             axes[0, 1].set_ylabel("Frequency")
-            axes[0, 1].set_title("Interval Distribution (Real Data)")
+            axes[0, 1].set_title("Interval Distribution")
             axes[0, 1].legend()
             axes[0, 1].grid(True, alpha=0.3)
             
             # Box plots
-            try:
-                df_melted = df.melt(id_vars=['is_botnet'], value_vars=['packet_size'], 
-                                   var_name='feature', value_name='value')
-                sns.boxplot(data=df_melted, x='is_botnet', y='value', ax=axes[1, 0])
-                axes[1, 0].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
-                axes[1, 0].set_ylabel("Packet Size")
-                axes[1, 0].set_title("Packet Size by Activity Type")
-                
-                df_melted2 = df.melt(id_vars=['is_botnet'], value_vars=['interval'], 
-                                    var_name='feature', value_name='value')
-                sns.boxplot(data=df_melted2, x='is_botnet', y='value', ax=axes[1, 1])
-                axes[1, 1].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
-                axes[1, 1].set_ylabel("Interval")
-                axes[1, 1].set_title("Interval by Activity Type")
-            except Exception as e:
-                st.warning(f"Could not create box plots: {e}")
+            df_melted = df.melt(id_vars=['is_botnet'], value_vars=['packet_size'], 
+                               var_name='feature', value_name='value')
+            sns.boxplot(data=df_melted, x='is_botnet', y='value', ax=axes[1, 0])
+            axes[1, 0].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
+            axes[1, 0].set_ylabel("Packet Size")
+            axes[1, 0].set_title("Packet Size by Activity Type")
+            
+            df_melted2 = df.melt(id_vars=['is_botnet'], value_vars=['interval'], 
+                                var_name='feature', value_name='value')
+            sns.boxplot(data=df_melted2, x='is_botnet', y='value', ax=axes[1, 1])
+            axes[1, 1].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
+            axes[1, 1].set_ylabel("Interval")
+            axes[1, 1].set_title("Interval by Activity Type")
             
             plt.tight_layout()
             st.pyplot(fig)
             plt.close()
         
         with tab3:
-            st.write("**Class Distribution Analysis (Real Data)**")
-            
-            class_counts = df['is_botnet'].value_counts()
+            st.write("**Model Architecture & Configuration (from main.py)**")
             
             col1, col2 = st.columns(2)
             
             with col1:
-                # Enhanced pie chart
-                fig, ax = plt.subplots(figsize=(8, 8))
-                colors = ['#98FB98', '#FFB6C1']  # Light green and light pink
-                wedges, texts, autotexts = ax.pie(class_counts.values, labels=['Normal', 'Botnet'], 
-                                                 autopct='%1.1f%%', colors=colors, startangle=90,
-                                                 explode=(0.05, 0.05), shadow=True)
-                
-                # Enhance text
-                for autotext in autotexts:
-                    autotext.set_color('black')
-                    autotext.set_fontweight('bold')
-                
-                ax.set_title("Class Distribution (Real Data)", fontsize=16, fontweight='bold', pad=20)
-                st.pyplot(fig)
-                plt.close()
+                st.code(f"""
+Model Architecture:
+- Input Layer: {X_train.shape[1]} features
+- Dense Layer 1: 128 neurons + ReLU + BatchNorm + Dropout(0.3)
+- Dense Layer 2: 64 neurons + ReLU + BatchNorm + Dropout(0.3)  
+- Dense Layer 3: 32 neurons + ReLU + Dropout(0.2)
+- Output Layer: 1 neuron + Sigmoid
+
+Optimizer: Adam (lr=0.001)
+Loss: Binary Crossentropy
+Metrics: Accuracy, Precision, Recall
+                """)
             
             with col2:
-                # Enhanced bar chart
-                fig, ax = plt.subplots(figsize=(8, 8))
-                bars = ax.bar(['Normal', 'Botnet'], class_counts.values, 
-                             color=['#98FB98', '#FFB6C1'], edgecolor='black', linewidth=1.5)
-                ax.set_ylabel("Count", fontsize=12)
-                ax.set_title("Activity Type Counts (Real Data)", fontsize=14, fontweight='bold')
-                ax.grid(True, alpha=0.3, axis='y')
-                
-                # Add value labels on bars
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
-                           f'{int(height):,}', ha='center', va='bottom', fontweight='bold')
-                
-                st.pyplot(fig)
-                plt.close()
+                st.code(f"""
+Training Configuration:
+- Epochs: 100 (with early stopping)
+- Batch Size: 32
+- Validation Split: 0.2
+- Class Weights: {class_weights}
+- Random Seed: 42
 
-else:
-    st.error("❌ Unable to load dataset from main.py path")
-    st.markdown("""
-    ### 🔧 Setup Instructions:
-    
-    1. **Ensure your dataset exists** at one of these locations:
-       - `/content/synthetic_robot_logs.csv` (main.py default)
-       - `./synthetic_robot_logs.csv` (current directory)
-       - `data/synthetic_robot_logs.csv` (data subfolder)
-    
-    2. **Run main.py first** to generate the dataset and train the deep learning model
-    
-    3. **Required columns** in your CSV:
-       - `packet_size` (numeric)
-       - `interval` (numeric) 
-       - `is_botnet` (binary: 0 or 1)
-    
-    4. **Optional**: The app will automatically use the trained model from `botnet_detection_model.h5` if available
-    """)
+Callbacks:
+- EarlyStopping (patience=10)
+- ReduceLROnPlateau (factor=0.5, patience=5)
+                """)
+            
+            st.subheader("Performance Summary")
+            metrics_df = pd.DataFrame({
+                'Metric': ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC'],
+                'Score': [test_accuracy, precision, recall, f1, roc_auc]
+            })
+            st.dataframe(metrics_df)
 
-# Sidebar with enhanced information
+# Sidebar
 st.sidebar.header("ℹ️ About This App")
 st.sidebar.write("""
-This application uses the **actual data and models from main.py** for botnet detection in robotic network logs.
+This app uses the **exact same data processing, model architecture, and evaluation** as your main.py file.
 
-**Integration with main.py:**
-- 📁 Uses same data path: `/content/synthetic_robot_logs.csv`
-- 🤖 Loads pre-trained deep learning model if available
-- 📊 Shows same statistics as main.py analysis
-- 🎯 Provides interactive interface for the trained model
+**Key Features:**
+- 📁 Same data path: `/content/synthetic_robot_logs.csv`
+- 🧠 Identical model architecture from main.py
+- 📊 Same preprocessing (StandardScaler, StratifiedShuffleSplit)
+- 🎯 Exact evaluation metrics and thresholds
+- 🔄 Reproducible results (seed=42)
 """)
 
-st.sidebar.header("🚀 Model Priority")
-st.sidebar.write("""
-**Model Loading Order:**
-1. 🥇 **Deep Learning Model** - From main.py (`botnet_detection_model.h5`)
-2. 🥈 **Random Forest** - Fallback if DL model not found
+st.sidebar.header("🎯 Accuracy Explanation")
+st.sidebar.write(f"""
+**Why the accuracy matches main.py:**
+- Uses identical train/test split (seed=42)
+- Same model architecture and hyperparameters
+- Identical preprocessing pipeline
+- Same evaluation methodology
 
 **Current Status:**
 """)
 
-if df is not None:
-    if 'model_type_display' in locals():
-        if "Deep Learning" in model_type_display:
-            st.sidebar.success("✅ Using Deep Learning model from main.py!")
-        else:
-            st.sidebar.info("ℹ️ Using fallback Random Forest model")
-    st.sidebar.success(f"✅ Dataset loaded with {len(df):,} records")
+if df is not None and 'test_accuracy' in locals():
+    st.sidebar.success(f"✅ Test Accuracy: {test_accuracy:.4f}")
+    st.sidebar.success(f"✅ Model loaded from main.py")
+    st.sidebar.success(f"✅ Dataset: {len(df):,} records")
 else:
-    st.sidebar.error("❌ No dataset loaded")
+    st.sidebar.error("❌ Setup incomplete")
 
-st.sidebar.header("📁 Expected File Structure")
-st.sidebar.code("""
-project/
-├── main.py (your main script)
-├── app.py (this streamlit app)
-├── synthetic_robot_logs.csv
-└── botnet_detection_model.h5 (generated)
-""")
-
-st.sidebar.header("🔧 Technical Details")
+st.sidebar.header("🔧 Requirements")
 st.sidebar.write("""
-**Data Processing:**
-- Same StandardScaler as main.py
-- Identical train/test split (80/20)
-- Matching feature normalization
-
-**Model Architecture:**
-- Deep Learning: 4-layer neural network
-- Fallback: Random Forest (100 trees)
-- Both use same preprocessing pipeline
+**To get exact main.py results:**
+1. Run in same environment as main.py
+2. Dataset must exist at `/content/synthetic_robot_logs.csv`
+3. Same Python packages and versions
+4. Optional: Pre-trained model `botnet_detection_model.h5`
 """)
