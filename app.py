@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
 import os
 
 # Configure the page
@@ -68,94 +71,58 @@ def create_sample_data():
     
     return df.sample(frac=1).reset_index(drop=True)  # Shuffle
 
-# Load TensorFlow model with fallback
+# Train scikit-learn model
 @st.cache_resource
-def load_trained_model():
-    """Load the trained model with comprehensive error handling"""
+def train_model():
+    """Train a scikit-learn model for botnet detection"""
     try:
-        # Try to import TensorFlow
-        import tensorflow as tf
-        from tensorflow.keras.models import load_model
+        # Load data for training
+        df = load_data()
+        if df is not None and 'is_botnet' in df.columns:
+            X = df[['packet_size', 'interval']].values
+            y = df['is_botnet'].values
+            
+            # Split data
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
+            )
+            
+            # Scale features
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+            
+            # Train model
+            model = RandomForestClassifier(
+                n_estimators=100, 
+                random_state=42,
+                max_depth=10,
+                min_samples_split=5
+            )
+            model.fit(X_train_scaled, y_train)
+            
+            # Calculate accuracy
+            train_accuracy = accuracy_score(y_train, model.predict(X_train_scaled))
+            test_accuracy = accuracy_score(y_test, model.predict(X_test_scaled))
+            
+            st.success(f"✅ Model trained successfully!")
+            st.info(f"📊 Training Accuracy: {train_accuracy:.3f} | Test Accuracy: {test_accuracy:.3f}")
+            
+            return model, scaler, test_accuracy
         
-        # Try different possible model paths
-        possible_paths = [
-            "botnet_detection_model.h5",
-            "models/botnet_detection_model.h5",
-            "./botnet_detection_model.h5"
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                model = load_model(path)
-                st.success(f"✅ Model loaded from {path}")
-                return model, "tensorflow"
-        
-        st.info("ℹ️ Pre-trained TensorFlow model not found. Using mock model.")
-        return create_sklearn_model(), "mock"
-        
-    except ImportError:
-        st.warning("⚠️ TensorFlow not available. Using scikit-learn model.")
-        return create_sklearn_model(), "sklearn"
+        else:
+            st.error("❌ Unable to train model: Invalid dataset")
+            return None, None, 0.0
+            
     except Exception as e:
-        st.warning(f"⚠️ Error loading TensorFlow model: {e}. Using mock model.")
-        return create_mock_model(), "mock"
+        st.error(f"❌ Error training model: {e}")
+        return None, None, 0.0
 
-def create_sklearn_model():
-    """Create a scikit-learn based model as fallback"""
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import train_test_split
-    
-    # Load data for training
-    df = load_data()
-    if df is not None and 'is_botnet' in df.columns:
-        X = df[['packet_size', 'interval']].values
-        y = df['is_botnet'].values
-        
-        # Train a simple model
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X_train_scaled, y_train)
-        
-        class SklearnModelWrapper:
-            def __init__(self, model, scaler):
-                self.model = model
-                self.scaler = scaler
-            
-            def predict(self, data):
-                scaled_data = self.scaler.transform(data)
-                # Return probabilities for positive class
-                proba = self.model.predict_proba(scaled_data)[:, 1]
-                return proba.reshape(-1, 1)
-        
-        return SklearnModelWrapper(model, scaler)
-    
-    return create_mock_model()
-
-def create_mock_model():
-    """Create a simple mock prediction function"""
-    class MockModel:
-        def predict(self, data):
-            # Simple heuristic: larger packets with smaller intervals are more likely to be botnets
-            packet_size = data[0][0]
-            interval = data[0][1]
-            
-            # Normalize inputs roughly
-            normalized_score = (packet_size / 1000) * (1 / (interval + 0.1))
-            probability = min(max(normalized_score / 10, 0.1), 0.9)
-            
-            return [[probability]]
-    
-    return MockModel()
-
-# Load data and model
+# Load data and train model
 df = load_data()
-model, model_type = load_trained_model()
+model, scaler, model_accuracy = train_model()
 
-if df is not None:
+if df is not None and model is not None:
     # Display basic info about the dataset
     st.subheader("📊 Dataset Information")
     col1, col2, col3, col4 = st.columns(4)
@@ -174,7 +141,7 @@ if df is not None:
             st.metric("Normal Records", int(normal_count))
     
     with col4:
-        st.metric("Model Type", model_type.title())
+        st.metric("Model Accuracy", f"{model_accuracy:.1%}")
     
     # Dataset preview
     st.subheader("🔍 Dataset Preview")
@@ -183,10 +150,6 @@ if df is not None:
     # Check if required columns exist
     required_columns = ['packet_size', 'interval']
     if all(col in df.columns for col in required_columns):
-        # Initialize scaler for input normalization
-        scaler = StandardScaler()
-        X = df[required_columns].values
-        X_scaled = scaler.fit_transform(X)
         
         # User input for prediction
         st.subheader("🔍 Predict Botnet Activity")
@@ -228,27 +191,28 @@ if df is not None:
                 try:
                     # Prepare input data
                     input_data = np.array([[packet_size, interval]])
+                    input_scaled = scaler.transform(input_data)
                     
-                    # Scale input if using sklearn model
-                    if model_type != "mock":
-                        input_scaled = scaler.transform(input_data)
-                        prediction = model.predict(input_scaled)[0][0]
-                    else:
-                        prediction = model.predict(input_data)[0][0]
+                    # Get prediction and probability
+                    prediction = model.predict(input_scaled)[0]
+                    probability = model.predict_proba(input_scaled)[0]
+                    confidence = max(probability)
                     
                     # Display result with styling
-                    if prediction > 0.5:
+                    if prediction == 1:
                         st.error(f"🔴 **Botnet Activity Detected!**")
-                        st.error(f"Confidence: {prediction:.1%}")
+                        st.error(f"Confidence: {confidence:.1%}")
                     else:
                         st.success(f"🟢 **Normal Activity**")
-                        st.success(f"Confidence: {(1-prediction):.1%}")
+                        st.success(f"Confidence: {confidence:.1%}")
                     
                     # Show additional details
                     with st.expander("📊 Prediction Details"):
-                        st.write(f"**Raw prediction score:** {prediction:.4f}")
-                        st.write(f"**Model type:** {model_type}")
-                        st.write(f"**Input values:** Packet Size = {packet_size}, Interval = {interval}")
+                        st.write(f"**Prediction:** {'Botnet' if prediction == 1 else 'Normal'}")
+                        st.write(f"**Normal Probability:** {probability[0]:.4f}")
+                        st.write(f"**Botnet Probability:** {probability[1]:.4f}")
+                        st.write(f"**Model Accuracy:** {model_accuracy:.1%}")
+                        st.write(f"**Input values:** Packet Size = {packet_size:.2f}, Interval = {interval:.2f}")
                         
                         # Show how this compares to dataset
                         percentile_packet = (df['packet_size'] < packet_size).mean() * 100
@@ -284,8 +248,9 @@ if df is not None:
                 
                 for i, (label, color) in enumerate(zip(labels, colors)):
                     mask = df['is_botnet'] == i
-                    ax.scatter(df[mask]['packet_size'], df[mask]['interval'], 
-                             alpha=0.6, s=50, c=color, label=label, edgecolors='white', linewidth=0.5)
+                    if mask.any():
+                        ax.scatter(df[mask]['packet_size'], df[mask]['interval'], 
+                                 alpha=0.6, s=50, c=color, label=label, edgecolors='white', linewidth=0.5)
                 
                 ax.set_xlabel("Packet Size (bytes)", fontsize=12)
                 ax.set_ylabel("Interval (seconds)", fontsize=12)
@@ -313,8 +278,9 @@ if df is not None:
                 # Packet size distribution
                 for class_val, color, label in zip([0, 1], ['green', 'red'], ['Normal', 'Botnet']):
                     subset = df[df['is_botnet'] == class_val]
-                    axes[0, 0].hist(subset['packet_size'], alpha=0.7, color=color,
-                                   label=label, bins=30, edgecolor='black', linewidth=0.5)
+                    if len(subset) > 0:
+                        axes[0, 0].hist(subset['packet_size'], alpha=0.7, color=color,
+                                       label=label, bins=30, edgecolor='black', linewidth=0.5)
                 axes[0, 0].set_xlabel("Packet Size (bytes)")
                 axes[0, 0].set_ylabel("Frequency")
                 axes[0, 0].set_title("Packet Size Distribution")
@@ -324,8 +290,9 @@ if df is not None:
                 # Interval distribution
                 for class_val, color, label in zip([0, 1], ['green', 'red'], ['Normal', 'Botnet']):
                     subset = df[df['is_botnet'] == class_val]
-                    axes[0, 1].hist(subset['interval'], alpha=0.7, color=color,
-                                   label=label, bins=30, edgecolor='black', linewidth=0.5)
+                    if len(subset) > 0:
+                        axes[0, 1].hist(subset['interval'], alpha=0.7, color=color,
+                                       label=label, bins=30, edgecolor='black', linewidth=0.5)
                 axes[0, 1].set_xlabel("Interval (seconds)")
                 axes[0, 1].set_ylabel("Frequency")
                 axes[0, 1].set_title("Interval Distribution")
@@ -333,19 +300,22 @@ if df is not None:
                 axes[0, 1].grid(True, alpha=0.3)
                 
                 # Box plots
-                df_melted = df.melt(id_vars=['is_botnet'], value_vars=['packet_size'], 
-                                   var_name='feature', value_name='value')
-                sns.boxplot(data=df_melted, x='is_botnet', y='value', ax=axes[1, 0])
-                axes[1, 0].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
-                axes[1, 0].set_ylabel("Packet Size")
-                axes[1, 0].set_title("Packet Size by Activity Type")
-                
-                df_melted2 = df.melt(id_vars=['is_botnet'], value_vars=['interval'], 
-                                    var_name='feature', value_name='value')
-                sns.boxplot(data=df_melted2, x='is_botnet', y='value', ax=axes[1, 1])
-                axes[1, 1].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
-                axes[1, 1].set_ylabel("Interval")
-                axes[1, 1].set_title("Interval by Activity Type")
+                try:
+                    df_melted = df.melt(id_vars=['is_botnet'], value_vars=['packet_size'], 
+                                       var_name='feature', value_name='value')
+                    sns.boxplot(data=df_melted, x='is_botnet', y='value', ax=axes[1, 0])
+                    axes[1, 0].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
+                    axes[1, 0].set_ylabel("Packet Size")
+                    axes[1, 0].set_title("Packet Size by Activity Type")
+                    
+                    df_melted2 = df.melt(id_vars=['is_botnet'], value_vars=['interval'], 
+                                        var_name='feature', value_name='value')
+                    sns.boxplot(data=df_melted2, x='is_botnet', y='value', ax=axes[1, 1])
+                    axes[1, 1].set_xlabel("Activity Type (0=Normal, 1=Botnet)")
+                    axes[1, 1].set_ylabel("Interval")
+                    axes[1, 1].set_title("Interval by Activity Type")
+                except Exception as e:
+                    st.warning(f"Could not create box plots: {e}")
                 
                 plt.tight_layout()
                 st.pyplot(fig)
@@ -412,7 +382,7 @@ if df is not None:
         st.error(f"❌ Required columns missing. Expected: {required_columns}, Found: {list(df.columns)}")
 
 else:
-    st.error("❌ Unable to load or create dataset")
+    st.error("❌ Unable to load dataset or train model")
 
 # Sidebar with enhanced information
 st.sidebar.header("ℹ️ About This App")
@@ -424,30 +394,78 @@ This application demonstrates **botnet detection** in robotic network logs using
 - 🔮 Real-time botnet prediction  
 - 📈 Comprehensive visualizations
 - 🎯 Statistical analysis
-- 🤖 Multiple model support
+- 🤖 Random Forest classifier
 """)
 
 st.sidebar.header("🚀 How It Works")
 st.sidebar.write("""
-1. **Data Analysis:** Explores packet size and interval patterns
-2. **Feature Engineering:** Standardizes input features  
-3. **Model Prediction:** Classifies traffic as normal or botnet
-4. **Visualization:** Shows data patterns and distributions
+1. **Data Generation:** Creates synthetic network traffic data
+2. **Feature Engineering:** Standardizes packet size and interval features
+3. **Model Training:** Uses Random Forest for classification
+4. **Prediction:** Classifies new traffic as normal or botnet
+5. **Visualization:** Shows data patterns and model performance
 """)
 
-st.sidebar.header("📁 File Requirements")
+st.sidebar.header("📁 File Support")
 st.sidebar.write("""
-**Optional Files:**
-- `synthetic_robot_logs.csv` - Training dataset
-- `botnet_detection_model.h5` - Pre-trained model
+**Supported Files:**
+- `synthetic_robot_logs.csv` - Custom dataset (optional)
 
-**Note:** App works with sample data if files are missing!
+**Required Columns:**
+- `packet_size` - Network packet size in bytes  
+- `interval` - Time between packets in seconds
+- `is_botnet` - Binary label (0=Normal, 1=Botnet)
+
+**Note:** App generates sample data if no file is provided!
 """)
 
 st.sidebar.header("🔧 Technical Details")
-st.sidebar.info(f"""
-**Current Setup:**
-- Model: {model_type.title()}
-- Records: {len(df) if df is not None else 0:,}
-- Features: {', '.join(required_columns) if df is not None else 'N/A'}
-""")
+if df is not None and model is not None:
+    st.sidebar.success(f"""
+    **Current Setup:**
+    ✅ Model: Random Forest  
+    ✅ Records: {len(df):,}  
+    ✅ Features: {', '.join(required_columns)}  
+    ✅ Accuracy: {model_accuracy:.1%}
+    """)
+else:
+    st.sidebar.error("❌ Setup incomplete")
+
+# Performance metrics section
+if model is not None and df is not None:
+    with st.expander("📊 Model Performance Details"):
+        st.subheader("Model Configuration")
+        st.code(f"""
+Random Forest Classifier:
+- Estimators: 100
+- Max Depth: 10
+- Min Samples Split: 5
+- Random State: 42
+- Test Accuracy: {model_accuracy:.3f}
+        """)
+        
+        # Feature importance
+        if hasattr(model, 'feature_importances_'):
+            st.subheader("Feature Importance")
+            importance_df = pd.DataFrame({
+                'Feature': required_columns,
+                'Importance': model.feature_importances_
+            }).sort_values('Importance', ascending=False)
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            bars = ax.bar(importance_df['Feature'], importance_df['Importance'], 
+                         color='skyblue', edgecolor='navy', linewidth=1.5)
+            ax.set_xlabel("Features")
+            ax.set_ylabel("Importance")
+            ax.set_title("Feature Importance in Botnet Detection")
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # Add value labels on bars
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                       f'{height:.3f}', ha='center', va='bottom', fontweight='bold')
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close()
